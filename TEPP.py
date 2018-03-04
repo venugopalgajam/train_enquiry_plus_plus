@@ -1,9 +1,9 @@
 import datetime as dt
 import json
 
-from db_tools import (connect_local, db, inter_stns, trains_btw_with_times, weekdays)
+from db_tools import (connect_local, connect_to_cloudsql, db, inter_stns, trains_btw_with_times, weekdays)
 
-
+connect_to_cloudsql()
 # log = open('./tepp.log','w')
 def get_trainspair(src, intr, dst, week_day):
     #print('get_trainpair',src,intr,dst,week_day)# pylint: disable=E1601

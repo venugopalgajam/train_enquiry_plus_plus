@@ -2,7 +2,7 @@
 import datetime as dt
 import logging
 
-from flask import Flask, render_template, request
+from flask import Flask, render_template, request, redirect, url_for
 
 from rendering_lib import *
 from tepp import get_paths
@@ -15,6 +15,10 @@ def enquiry():
 @app.route('/favicon.ico')
 def favicon():
     return render_template('train_ico.png')
+
+@app.route('/')
+def index():
+    return redirect(url_for('enquiry'))
 
 @app.route('/service.html')
 def service():
