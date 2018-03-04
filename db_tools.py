@@ -4,10 +4,46 @@
 import MySQLdb
 import json
 import csv
+import os
 
 db_details = json.load(open('./mysql_details.json'))
 db = MySQLdb.connect(host=db_details['host'],user = db_details['user'], port=db_details['port'],passwd=db_details['passwd'],db=db_details['db'])
 weekdays = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN']
+log = open('db_tools.log','w')
+
+
+# These environment variables are configured in app.yaml.
+CLOUDSQL_CONNECTION_NAME = os.environ.get('CLOUDSQL_CONNECTION_NAME')
+CLOUDSQL_USER = os.environ.get('CLOUDSQL_USER')
+CLOUDSQL_PASSWORD = os.environ.get('CLOUDSQL_PASSWORD')
+def connect_to_cloudsql():
+    # When deployed to App Engine, the `SERVER_SOFTWARE` environment variable
+    # will be set to 'Google App Engine/version'.
+    if os.getenv('SERVER_SOFTWARE', '').startswith('Google App Engine/'):
+        # Connect using the unix socket located at
+        # /cloudsql/cloudsql-connection-name.
+        cloudsql_unix_socket = os.path.join(
+            '/cloudsql', CLOUDSQL_CONNECTION_NAME)
+
+        db = MySQLdb.connect(
+            unix_socket=cloudsql_unix_socket,
+            user=CLOUDSQL_USER,
+            passwd=CLOUDSQL_PASSWORD)
+
+    # If the unix socket is unavailable, then try to connect using TCP. This
+    # will work if you're running a local MySQL server or using the Cloud SQL
+    # proxy, for example:
+    #
+    #   $ cloud_sql_proxy -instances=your-connection-name=tcp:3306
+    #
+    else:
+        db = MySQLdb.connect(
+            host='127.0.0.1', user=CLOUDSQL_USER, passwd=CLOUDSQL_PASSWORD)
+
+    return db
+
+def connect_local():
+    return MySQLdb.connect(host=db_details['host'],user = db_details['user'], port=db_details['port'],passwd=db_details['passwd'],db=db_details['db'])
 
 inter_stns_query = """ select stations.stn_code, stations.trains_cnt from hops inner join stations on hops.stn_code = stations.stn_code where train_no = %s and hop_index > 0+%s and hop_index < 0+%s """
 def inter_stns(src, dst, weekday):
@@ -15,17 +51,18 @@ def inter_stns(src, dst, weekday):
         if weekday<7 and weekday >=0 :
             weekday = weekdays[weekday]
         else:
-            print('invalid weekday')
-            return None
+            print('invalid weekday') # pylint: disable=E1601
+            return None,None
     elif type(weekday) == type('MON'):
         if weekday not in weekdays:
-            print('invalid weekday!')
-            return None
+            print('invalid weekday!') # pylint: disable=E1601
+            return None,None
 
-    trains = trains_btw(src, dst, weekday)
+    trains = trains_btw_with_times(src, dst, weekday)
+    print(trains)# pylint: disable=E1601
     if trains is None:
-        print('No trains btw',src,dst)
-        return None
+        print('No trains btw',src,dst)# pylint: disable=E1601
+        return None,None
     stns_list = dict()
     ptr = db.cursor()
     for tpl in trains:
@@ -38,46 +75,48 @@ def inter_stns(src, dst, weekday):
     # print(stns_list_sorted)
     return stns_list_sorted,trains
 
-trains_btw_query ={
-                    'MON':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.MON = 1 """,
-                    'TUE':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.TUE = 1 """,
-                    'WED':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.WED = 1 """,
-                    'THU':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.THU = 1 """,
-                    'FRI':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.FRI = 1 """,
-                    'SAT':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.SAT = 1 """,
-                    'SUN':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.SUN = 1 """,
-                }
-def trains_btw(src, dst, weekday):
-    ptr = db.cursor()
-    if weekday not in trains_btw_query:
-        print('invalid weekday')
-        return None
-    ptr.execute(trains_btw_query[weekday],(src,dst))
-    return ptr.fetchall()
+# trains_btw_query ={
+#                     'MON':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.MON = 1 """,
+#                     'TUE':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.TUE = 1 """,
+#                     'WED':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.WED = 1 """,
+#                     'THU':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.THU = 1 """,
+#                     'FRI':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.FRI = 1 """,
+#                     'SAT':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.SAT = 1 """,
+#                     'SUN':""" select trains.train_no,src.hop_index,dst.hop_index from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.SUN = 1 """,
+#                 }
+# def trains_btw(src, dst, weekday):
+#     ptr = db.cursor()
+#     if weekday not in trains_btw_query:
+#         print('invalid weekday')# pylint: disable=E1601
+#         return None
+#     ptr.execute(trains_btw_query[weekday],(src,dst))
+#     return ptr.fetchall()
 
 trains_btw_with_times_qry = "select trains.train_no,src.hop_index,dst.hop_index, src.arr_time, src.dept_time, dst.arr_time, dst.dept_time, src.day, dst.day from (hops as src inner join hops as dst on src.train_no = dst.train_no inner join trains on src.train_no = trains.train_no) where src.hop_index < dst.hop_index and src.stn_code = %s and dst.stn_code = %s and trains.%w = 1 and src.day = %s"
 def trains_btw_with_times(src, dst, weekday):
-    print('trains_btw_with_times',src,dst,weekday)
+    log.write('trains_btw_with_times '+src+' '+dst+' '+str(weekday)+'\n')
     week_day_no = 0
     if type(weekday) is type(0):
         if weekday<7 and weekday >=0 :
             # weekday = weekdays[weekday]
             week_day_no = weekday
         else:
-            print('invalid weekday')
+            print('invalid weekday')# pylint: disable=E1601
             return None
     elif type(weekday) == type('MON'):
         try:
-            week_day_no = weekdays.index(week_day_no)
+            week_day_no = weekdays.index(weekday)
         except ValueError as err:
-            print('invalid weekday',err)
+            print('invalid weekday',err,weekday,week_day_no)# pylint: disable=E1601
             return None
     ptr = db.cursor()
     result = list()
     for i in range(5):
         qry = trains_btw_with_times_qry.replace('%w',weekdays[(week_day_no-i+7)%7])
         ptr.execute(qry,(src,dst,str((i+1)%7)))
-        result += list(ptr.fetchall())
+        trains_list = list(ptr.fetchall())
+        result += trains_list
+        log.write(qry+' '+src+' '+dst+' '+str((i+1)%7)+'\nrows returned = '+str(len(trains_list))+'\n')
     return result
 insert_station_query = """ INSERT INTO `train_enquiry_plus_plus`.`stations` (`stn_code`, `stn_name`) VALUES (%s, %s); """
 insert_train_query = """INSERT INTO `train_enquiry_plus_plus`.`trains` (`train_no`, `train_name`, `src_stn_code`, `dest_stn_code`, `MON`, `TUE`, `WED`, `THU`, `FRI`, `SAT`, `SUN`) VALUES (%s, %s, %s, %s, %s,%s,%s,%s,%s,%s,%s)"""
@@ -86,13 +125,13 @@ def insert_into_db_from_csv(qry,csv_path):
     table = list()
     for row in csv.reader(open(csv_path)):
         if len(table) >0 and row[0] == table[-1][0] and row[1] == table[-1][1]:
-            print(row[0],row[1],'ignored')
+            print(row[0],row[1],'ignored')# pylint: disable=E1601
             continue
         table.append(tuple(row))
     ptr = db.cursor()
     ptr.executemany(qry, table)
     db.commit()
-    print("rows inserted:",len(table))
+    print("rows inserted:",len(table))# pylint: disable=E1601
 
 def insert_stations_into_db(stations_list):
     for station in stations_list:
@@ -101,7 +140,7 @@ def insert_stations_into_db(stations_list):
             ptr.execute(insert_station_query,(str(station),''))
             db.commit()
         except Exception as info:
-            print(info)
+            print(info)# pylint: disable=E1601
 
 def get_stations_from_hops_csv(hops_csv_path):
     stations = set()
@@ -118,6 +157,6 @@ def update_trains_cnt():
     for row in results:
         ptr.execute(trains_cnt_update_qry,(row[1],row[0]))
     db.commit()
-    print(len(results),'rows updated')
+    print(len(results),'rows updated')# pylint: disable=E1601
 
 # update_trains_cnt()
